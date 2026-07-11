@@ -1,0 +1,33 @@
+# Org-wide reusable release build: tag assertion, sdist/wheel, twine check.
+# The PyPI publish job itself must live in each caller (PyPI Trusted
+# Publishing validates job_workflow_ref, which cross-repo reusable
+# workflows cannot satisfy), so this file stops at the artifact.
+name: reusable-release-build
+
+on:
+  workflow_call:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Assert tag matches pyproject version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VER=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [ "$TAG" != "$VER" ]; then
+            echo "::error::tag v$TAG does not match pyproject version $VER"
+            exit 1
+          fi
+      - run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+          twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
