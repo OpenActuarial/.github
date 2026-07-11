@@ -1,0 +1,83 @@
+# Org-wide reusable CI. Called by each package repo's ci.yml so the
+# quality gate cannot drift between repos. Change it here, every repo follows.
+name: reusable-ci
+
+on:
+  workflow_call:
+    inputs:
+      package:
+        required: true
+        type: string
+      extras:
+        type: string
+        default: "dev"
+      extra-pip:
+        type: string
+        default: ""
+      coverage-min:
+        type: number
+        default: 0
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install ruff
+      - run: ruff check src tests $([ -d examples ] && echo examples)
+
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e ".[${{ inputs.extras }}]"
+      - if: inputs.extra-pip != ''
+        run: python -m pip install ${{ inputs.extra-pip }}
+      - name: Test (coverage-gated when coverage-min > 0)
+        run: |
+          if [ "${{ inputs.coverage-min }}" != "0" ]; then
+            python -m pip install pytest-cov
+            pytest --cov=${{ inputs.package }} --cov-report=term-missing --cov-fail-under=${{ inputs.coverage-min }}
+          else
+            pytest
+          fi
+      - name: Run every documented example against installed dependencies
+        run: |
+          if [ -d examples ]; then
+            while IFS= read -r example; do
+              echo "Running ${example}"
+              python "${example}" >/dev/null
+            done < <(find examples -name "*.py" -type f | sort)
+          fi
+      - run: python -m pip install build && python -m build
+
+  clean-wheel-install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install build && python -m build
+      - name: Install the wheel into a clean environment and import it
+        run: |
+          python -m venv /tmp/wheeltest
+          /tmp/wheeltest/bin/pip install dist/*.whl
+          /tmp/wheeltest/bin/python -c "import ${{ inputs.package }} as p; print(p.__name__, p.__version__)"
