@@ -26,8 +26,8 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - run: python -m pip install ruff
@@ -41,8 +41,8 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -71,8 +71,8 @@ jobs:
   clean-wheel-install:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - run: python -m pip install build && python -m build
@@ -81,3 +81,5 @@ jobs:
           python -m venv /tmp/wheeltest
           /tmp/wheeltest/bin/pip install dist/*.whl
           /tmp/wheeltest/bin/python -c "import ${{ inputs.package }} as p; print(p.__name__, p.__version__)"
+      - name: Check dependency metadata consistency
+        run: /tmp/wheeltest/bin/python -m pip check

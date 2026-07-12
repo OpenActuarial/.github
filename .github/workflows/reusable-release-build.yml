@@ -8,11 +8,19 @@ on:
   workflow_call:
 
 jobs:
+  # A v* tag must not publish untested code: run the full reusable CI on the
+  # tagged commit before anything is built or uploaded.
+  ci:
+    uses: OpenActuarial/.github/.github/workflows/reusable-ci.yml@main
+    with:
+      package: ${{ github.event.repository.name }}
+
   build:
+    needs: ci
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Assert tag matches pyproject version
