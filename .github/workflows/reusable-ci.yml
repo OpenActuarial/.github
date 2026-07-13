@@ -125,12 +125,44 @@ jobs:
           fi
       - name: Run every documented example against installed dependencies
         run: |
-          if [ -d examples ]; then
-            while IFS= read -r example; do
-              echo "Running ${example}"
-              python "${example}" >/dev/null
-            done < <(find examples -name "*.py" -type f | sort)
-          fi
+          python - "${{ inputs.package }}" << 'RUNEX'
+          import pathlib, re, subprocess, sys, tomllib
+
+          # An example that fails ONLY because a module declared in one of this
+          # package's optional extras is not installed is skipped, not failed:
+          # the release build re-runs CI with default extras (no "plot" etc.),
+          # and a demo needing matplotlib must not turn the release red. Every
+          # other failure -- a missing REQUIRED dependency (those live in
+          # [project.dependencies], never in this set), a real ImportError, an
+          # assertion, any traceback -- still fails hard.
+          with open("pyproject.toml", "rb") as f:
+              project = tomllib.load(f)["project"]
+          optional = set()
+          for reqs in project.get("optional-dependencies", {}).values():
+              for req in reqs:
+                  m = re.match(r"[A-Za-z0-9_.-]+", req.strip())
+                  if m:
+                      optional.add(m.group(0).replace("-", "_").lower())
+
+          root = pathlib.Path("examples")
+          examples = sorted(root.rglob("*.py")) if root.is_dir() else []
+          failed = False
+          for ex in examples:
+              proc = subprocess.run([sys.executable, str(ex)],
+                                    capture_output=True, text=True)
+              if proc.returncode == 0:
+                  print(f"ok    {ex}")
+                  continue
+              miss = re.search(r"No module named '([^']+)'", proc.stderr)
+              mod = miss.group(1).split(".")[0].replace("-", "_").lower() if miss else None
+              if mod and mod in optional:
+                  print(f"skip  {ex}  (optional dependency not installed: {mod})")
+                  continue
+              print(f"FAIL  {ex}")
+              print(proc.stderr[-1500:])
+              failed = True
+          sys.exit(1 if failed else 0)
+          RUNEX
       - run: python -m pip install build && python -m build
 
   # The declared lower bounds must be demonstrated, not just advertised:
