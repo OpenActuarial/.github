@@ -125,8 +125,14 @@ jobs:
           fi
       - name: Run every documented example against installed dependencies
         run: |
+          # tomllib is stdlib on 3.11+; on 3.10 install its backport first.
+          python -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" || python -m pip install --quiet tomli
           python - "${{ inputs.package }}" << 'RUNEX'
-          import pathlib, re, subprocess, sys, tomllib
+          import pathlib, re, subprocess, sys
+          try:
+              import tomllib  # Python 3.11+
+          except ModuleNotFoundError:  # 3.10 has no tomllib
+              import tomli as tomllib
 
           # An example that fails ONLY because a module declared in one of this
           # package's optional extras is not installed is skipped, not failed:
