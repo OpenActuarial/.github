@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security report
+    url: https://github.com/OpenActuarial
+    about: Use private vulnerability reporting on the affected repository, not a public issue.

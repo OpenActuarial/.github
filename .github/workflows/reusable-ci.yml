@@ -1,5 +1,10 @@
 # Org-wide reusable CI. Called by each package repo's ci.yml so the
 # quality gate cannot drift between repos. Change it here, every repo follows.
+#
+# Callers reference this file as OpenActuarial/.github/.../reusable-ci.yml@v1:
+# the v1 tag is moved deliberately by the maintainer (change control), while
+# third-party actions below are pinned to immutable commit SHAs
+# (supply-chain control). Dependabot proposes SHA updates.
 name: reusable-ci
 
 on:
@@ -23,26 +28,86 @@ defaults:
     shell: bash
 
 jobs:
+  # Single source of truth for the supported Python range. The test matrix,
+  # the metadata check, and the min-deps job all read from here, so the range
+  # can only change in one place.
+  versions:
+    runs-on: ubuntu-latest
+    outputs:
+      pythons: ${{ steps.set.outputs.pythons }}
+      oldest: ${{ steps.set.outputs.oldest }}
+    steps:
+      - id: set
+        run: |
+          echo 'pythons=["3.10", "3.11", "3.12", "3.13", "3.14"]' >> "$GITHUB_OUTPUT"
+          echo 'oldest=3.10' >> "$GITHUB_OUTPUT"
+
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
       - run: python -m pip install ruff
       - run: ruff check src tests $([ -d examples ] && echo examples)
 
+  # Package metadata must agree with the range this workflow actually tests:
+  # the X.Y classifiers must equal the matrix, and requires-python must floor
+  # at the oldest tested version. Catches the classifier drift that let 3.14
+  # go untested-in-name while tested-in-fact.
+  metadata:
+    needs: versions
+    runs-on: ubuntu-latest
+    env:
+      PYTHONS: ${{ needs.versions.outputs.pythons }}
+      OLDEST: ${{ needs.versions.outputs.oldest }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Classifiers and requires-python match the tested range
+        run: |
+          python - << 'PYEOF'
+          import json, os, re, sys, tomllib
+
+          tested = set(json.loads(os.environ["PYTHONS"]))
+          oldest = os.environ["OLDEST"]
+          with open("pyproject.toml", "rb") as f:
+              project = tomllib.load(f)["project"]
+
+          declared = {
+              m.group(1)
+              for c in project.get("classifiers", [])
+              if (m := re.fullmatch(r"Programming Language :: Python :: (\d+\.\d+)", c))
+          }
+          problems = []
+          if declared != tested:
+              problems.append(
+                  f"classifiers declare {sorted(declared)} but CI tests {sorted(tested)}"
+              )
+          floor = re.search(r">=\s*(\d+\.\d+)", project.get("requires-python", ""))
+          if not floor or floor.group(1) != oldest:
+              problems.append(
+                  f"requires-python {project.get('requires-python')!r} does not floor at {oldest}"
+              )
+          if problems:
+              sys.exit("metadata drift: " + "; ".join(problems))
+          print(f"metadata consistent: {sorted(tested)}, floor {oldest}")
+          PYEOF
+
   test:
+    needs: versions
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ${{ fromJSON(needs.versions.outputs.pythons) }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -68,11 +133,34 @@ jobs:
           fi
       - run: python -m pip install build && python -m build
 
+  # The declared lower bounds must be demonstrated, not just advertised:
+  # install every direct dependency at its floor (uv --resolution
+  # lowest-direct) on the oldest supported Python and run the suite.
+  # extra-pip is deliberately omitted -- optional comparison libraries
+  # resolve freely and would drag the floors upward; tests importorskip them.
+  min-deps:
+    needs: versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ needs.versions.outputs.oldest }}
+      - run: python -m pip install uv
+      - name: Install at minimum declared versions
+        run: |
+          uv venv .venv-min
+          uv pip install --python .venv-min --resolution lowest-direct -e ".[${{ inputs.extras }}]"
+          .venv-min/bin/python -c "import sys; print(sys.version)"
+          .venv-min/bin/python -m pip list 2>/dev/null || .venv-min/bin/python -m ensurepip --quiet || true
+      - name: Test at minimum declared versions
+        run: .venv-min/bin/python -m pytest -q
+
   clean-wheel-install:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
       - run: python -m pip install build && python -m build
